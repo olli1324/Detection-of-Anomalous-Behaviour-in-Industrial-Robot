@@ -1,0 +1,10 @@
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+seaborn>=0.13
+scikit-learn>=1.4
+torch>=2.2
+tqdm>=4.66
+pyyaml>=6.0
+# Optional, only needed for the UMAP sanity check
+umap-learn>=0.5

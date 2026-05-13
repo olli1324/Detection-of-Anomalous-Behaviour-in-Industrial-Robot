@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+# Datasets are tracked outside the repo
+../KukaVelocityDataset/
+../KukaVelocityDataset.zip
+# Run artifacts
+results/figures/*.png
+results/figures/*.pdf
+results/*.csv
+# But keep the markdown summary in git
+!results/EXPLORATION.md
+# Model checkpoints (added later)
+checkpoints/
+*.pt
+*.pth
+wandb/

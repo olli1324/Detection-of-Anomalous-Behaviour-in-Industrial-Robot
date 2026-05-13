@@ -1,0 +1,28 @@
+# Default config used by both train_ae.py and train_aae.py.
+# Override via CLI flags (see argparse in each script).
+seed: 42
+
+windows:
+  window: 64       # timesteps per window (must be divisible by 8)
+  stride: 16       # window stride; controls dataset size
+  val_frac: 0.10   # fraction of Normal segments held out for threshold calibration
+  test_frac: 0.20  # fraction of Normal segments held out for final eval
+
+model:
+  channels: [64, 96, 128]
+  kernel_size: 5
+  latent_dim: 32
+
+aae:
+  discriminator_hidden: [128, 128]
+  adv_weight: 0.1
+
+train:
+  batch_size: 256
+  n_epochs: 30
+  lr_ae: 0.001
+  lr_disc: 0.0005
+  weight_decay: 0.00001
+
+eval:
+  fpr_target: 0.05  # threshold-at-FPR target on Normal validation
