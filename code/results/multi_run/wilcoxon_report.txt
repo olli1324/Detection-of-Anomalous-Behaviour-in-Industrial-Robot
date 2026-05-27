@@ -1,0 +1,26 @@
+============================================================
+  WILCOXON SIGNED-RANK TEST  (AE vs AAE, paired by seed)
+  H1: AE > AAE   |   n = 6
+============================================================
+
+ROC-AUC
+  AE  mean=0.8163  std=0.0170
+  AAE mean=0.7823  std=0.0133
+  AE wins 5/6 seeds
+  Wilcoxon W=20.0  p=0.0312  -> *** SIGNIFICANT (p < 0.05)
+
+PR-AUC
+  AE  mean=0.7902  std=0.0154
+  AAE mean=0.7685  std=0.0124
+  AE wins 4/6 seeds
+  Wilcoxon W=18.0  p=0.0781  -> ~ marginal (p < 0.10)
+
+F1@FPR-5%
+  AE  mean=0.3948  std=0.0589
+  AAE mean=0.3108  std=0.0909
+  AE wins 5/6 seeds
+  Wilcoxon W=20.0  p=0.0312  -> *** SIGNIFICANT (p < 0.05)
+
+============================================================
+Note: minimum achievable p with n=6 is 0.03125.
+============================================================
