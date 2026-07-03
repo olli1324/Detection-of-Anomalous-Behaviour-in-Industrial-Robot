@@ -248,3 +248,51 @@ def collect_anomaly_scores(model, loader, device) -> tuple[np.ndarray, np.ndarra
         np.concatenate(labels) if labels else np.zeros((0,), dtype=np.int64),
         np.concatenate(actions) if actions else np.zeros((0,), dtype=np.int64),
     )
+
+
+def collect_aae_scores(
+    model: AdversarialAE, loader, device
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Run AAE inference and return ``(recon_scores, disc_scores, labels, actions)``.
+
+    ``recon_scores`` is per-window reconstruction MSE (same as
+    :func:`collect_anomaly_scores`).
+
+    ``disc_scores`` is the discriminator's **off-prior probability** for
+    each window's latent code. The discriminator is trained to output a
+    high logit for latents drawn from the prior ("real") and a low logit
+    for encoded latents ("fake"). An anomalous window whose latent code
+    falls off-prior should therefore receive a low "real" logit, i.e. a
+    high off-prior probability ``sigmoid(-logit)``. This is the signal
+    that the standard AAE scoring discards; combining it with the
+    reconstruction error is the extension proposed in the report
+    (Section VI-A3, following Perera et al. OCGAN).
+    """
+    import torch
+    import torch.nn.functional as F
+
+    model.eval()
+    recon_scores: list[np.ndarray] = []
+    disc_scores: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+    actions: list[np.ndarray] = []
+    with torch.no_grad():
+        for batch in loader:
+            x, y, a = batch[0].to(device, non_blocking=True), batch[1], batch[2]
+            x_hat, z = model(x)
+            err = per_window_recon_error(x, x_hat).cpu().numpy()
+            logit = model.disc(z)  # (B,) — high = on-prior ("real")
+            off_prior = torch.sigmoid(-logit).cpu().numpy()  # high = off-prior
+            recon_scores.append(err)
+            disc_scores.append(off_prior)
+            labels.append(y.numpy())
+            actions.append(a.numpy())
+    cat = lambda lst, dtype: (
+        np.concatenate(lst) if lst else np.zeros((0,), dtype=dtype)
+    )
+    return (
+        cat(recon_scores, np.float32),
+        cat(disc_scores, np.float32),
+        cat(labels, np.int64),
+        cat(actions, np.int64),
+    )

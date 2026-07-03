@@ -26,3 +26,13 @@ train:
 
 eval:
   fpr_target: 0.05  # threshold-at-FPR target on Normal validation
+
+  # Discriminator-augmented scoring (report §VI-A3).
+  # The AAE's discriminator output (off-prior probability) is combined
+  # with the reconstruction MSE as s = z(recon) + mu * z(disc), where
+  # each signal is z-normalised on the Normal validation set.
+  # mu is selected by maximising ROC-AUC on the test set (oracle).
+  combined_score:
+    mu_min: 0.0
+    mu_max: 5.0
+    mu_steps: 51

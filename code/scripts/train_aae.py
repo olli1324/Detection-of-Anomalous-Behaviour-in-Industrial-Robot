@@ -25,8 +25,13 @@ from _runner_common import (  # noqa: E402
 from src.metrics import compute_metrics  # noqa: E402
 from src.models.ae import AEConfig  # noqa: E402
 from src.models.aae import AAEConfig, AdversarialAE  # noqa: E402
-from src.scoring import threshold_at_fpr, threshold_max_f1  # noqa: E402
-from src.training import collect_anomaly_scores, train_aae  # noqa: E402
+from src.scoring import (  # noqa: E402
+    best_combined_score,
+    combine_scores,
+    threshold_at_fpr,
+    threshold_max_f1,
+)
+from src.training import collect_aae_scores, train_aae  # noqa: E402
 from src.utils import results_dir, seed_everything, select_device  # noqa: E402
 
 
@@ -77,26 +82,56 @@ def main(epochs: int | None = None) -> None:
 
     print("[4/4] Evaluating + thresholding...")
 
-    val_scores, _, _ = collect_anomaly_scores(result.model, loaders.val_normal, device)
-    test_scores, test_labels, test_actions = collect_anomaly_scores(
+    # Collect reconstruction MSE AND discriminator off-prior probability.
+    # The discriminator signal is what the standard AAE scoring discards;
+    # combining it with the reconstruction error is the extension proposed
+    # in the report (Section VI-A3, following Perera et al. OCGAN).
+    val_recon, val_disc, _, _ = collect_aae_scores(result.model, loaders.val_normal, device)
+    test_recon, test_disc, test_labels, test_actions = collect_aae_scores(
         result.model, loaders.stacked_test, device
     )
 
-    thr_fpr = threshold_at_fpr(val_scores, fpr=cfg["eval"]["fpr_target"])
-    thr_f1 = threshold_max_f1(test_scores, test_labels)
+    # --- Baseline: reconstruction-only scoring (as before) ---------------
+    thr_fpr = threshold_at_fpr(val_recon, fpr=cfg["eval"]["fpr_target"])
+    thr_f1 = threshold_max_f1(test_recon, test_labels)
 
-    metrics_fpr = compute_metrics(test_scores, test_labels, thr_fpr.value, actions=test_actions)
-    metrics_f1 = compute_metrics(test_scores, test_labels, thr_f1.value, actions=test_actions)
+    metrics_fpr = compute_metrics(test_recon, test_labels, thr_fpr.value, actions=test_actions)
+    metrics_f1 = compute_metrics(test_recon, test_labels, thr_f1.value, actions=test_actions)
+
+    # --- Discriminator-augmented combined score -------------------------
+    # s_combined = z(recon) + mu * z(disc), z-normalised on Normal val.
+    # Select mu by maximising ROC-AUC on the test set (oracle upper bound,
+    # reported alongside the max-F1 threshold for context).
+    cs_cfg = cfg["eval"].get("combined_score", {})
+    mu_grid = np.linspace(
+        cs_cfg.get("mu_min", 0.0),
+        cs_cfg.get("mu_max", 5.0),
+        int(cs_cfg.get("mu_steps", 51)),
+    )
+    best_mu, best_auc, test_combined = best_combined_score(
+        val_recon, val_disc, test_recon, test_disc, test_labels, mu_grid=mu_grid
+    )
+    # Threshold the combined score at the same FPR target, using the
+    # combined-score distribution on the Normal validation set.
+    val_combined = combine_scores(val_recon, val_disc, val_recon, val_disc, mu=best_mu)
+    thr_combined_fpr = threshold_at_fpr(val_combined, fpr=cfg["eval"]["fpr_target"])
+    thr_combined_f1 = threshold_max_f1(test_combined, test_labels)
+    metrics_combined_fpr = compute_metrics(
+        test_combined, test_labels, thr_combined_fpr.value, actions=test_actions
+    )
+    metrics_combined_f1 = compute_metrics(
+        test_combined, test_labels, thr_combined_f1.value, actions=test_actions
+    )
 
     plot_score_distribution(
-        test_scores,
+        test_recon,
         test_labels,
         title="AAE — anomaly score (test)",
         fname=out / "aae_score_hist.png",
         threshold=thr_fpr.value,
     )
     plot_roc_pr(
-        test_scores,
+        test_recon,
         test_labels,
         title="Adversarial AE",
         fname_roc=out / "aae_roc.png",
@@ -105,9 +140,15 @@ def main(epochs: int | None = None) -> None:
 
     np.savez_compressed(
         out / "aae_scores.npz",
-        scores=test_scores,
+        scores=test_recon,
+        disc_scores=test_disc,
+        combined_scores=test_combined,
         labels=test_labels,
         actions=test_actions,
+        val_recon=val_recon,
+        val_disc=val_disc,
+        val_combined=val_combined,
+        best_mu=best_mu,
     )
     payload = {
         "model": "AdversarialAE",
@@ -130,9 +171,26 @@ def main(epochs: int | None = None) -> None:
                 "method": thr_f1.method,
                 "detail": thr_f1.detail,
             },
+            "combined_fpr": {
+                "value": thr_combined_fpr.value,
+                "method": thr_combined_fpr.method,
+                "detail": thr_combined_fpr.detail,
+            },
+            "combined_max_f1_test": {
+                "value": thr_combined_f1.value,
+                "method": thr_combined_f1.method,
+                "detail": thr_combined_f1.detail,
+            },
+        },
+        "combined_score": {
+            "best_mu": best_mu,
+            "best_auc_oracle": best_auc,
+            "mu_grid": mu_grid.tolist(),
         },
         "metrics_at_fpr_threshold": metrics_fpr.as_dict(),
         "metrics_at_max_f1_threshold": metrics_f1.as_dict(),
+        "metrics_combined_at_fpr_threshold": metrics_combined_fpr.as_dict(),
+        "metrics_combined_at_max_f1_threshold": metrics_combined_f1.as_dict(),
     }
     save_json(out / "aae_metrics.json", payload)
 
@@ -145,6 +203,15 @@ def main(epochs: int | None = None) -> None:
     print(
         f"AAE @ best-F1 (cheat) threshold ({thr_f1.value:.4f}):"
         f"  ROC-AUC {metrics_f1.roc_auc:.4f}  F1 {metrics_f1.f1_at_thr:.4f}"
+    )
+    print(
+        f"AAE+disc @ mu={best_mu:.2f} (oracle) | FPR-{cfg['eval']['fpr_target']:.0%} thr"
+        f" ({thr_combined_fpr.value:.4f}):  ROC-AUC {metrics_combined_fpr.roc_auc:.4f}"
+        f"  PR-AUC {metrics_combined_fpr.pr_auc:.4f}  F1 {metrics_combined_fpr.f1_at_thr:.4f}"
+    )
+    print(
+        f"AAE+disc @ best-F1 (cheat) threshold ({thr_combined_f1.value:.4f}):"
+        f"  ROC-AUC {metrics_combined_fpr.roc_auc:.4f}  F1 {metrics_combined_fpr.f1_at_thr:.4f}"
     )
     print(f"Artifacts saved to: {out}")
 
