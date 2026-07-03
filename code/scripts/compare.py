@@ -132,7 +132,7 @@ def main() -> None:
     panels = [(axes[0], "AE", ae_s, "#4c72b0"), (axes[1], "AAE", aae_s, "#dd8452")]
     if has_combined:
         panels.append((axes[2], "AAE+disc", aae_combined, "#55a868"))
-    for ax, name, s in panels:
+    for ax, name, s, _ in panels:
         bins = np.linspace(min(s.min(), 0), s.max(), 80)
         ax.hist(s[ae_y == 0], bins=bins, alpha=0.55, color="#4c72b0", label="Normal")
         ax.hist(s[ae_y == 1], bins=bins, alpha=0.55, color="#dd8452", label="Slow")
